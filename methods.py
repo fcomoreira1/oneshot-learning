@@ -237,6 +237,8 @@ def convolutional_autoencoder(input_size, code_size: int):
     encoder = keras.Sequential([
         keras.layers.Conv2D(16, (3,3), padding='same', activation='ReLU'),
         keras.layers.MaxPooling2D(pool_size=(4, 4), padding='same'),
+        keras.layers.Conv2D(8, (3,3), padding='same', activation='ReLU'),
+        keras.layers.MaxPooling2D(pool_size=(4, 4), padding='same'),
         keras.layers.Conv2D(2, (3,3), padding='same', activation='ReLU'),
         keras.layers.MaxPooling2D(pool_size=(4, 4), padding='same'),
         keras.layers.Flatten(),
@@ -244,11 +246,11 @@ def convolutional_autoencoder(input_size, code_size: int):
     ])
     
     decoder = keras.Sequential([
-        keras.layers.Dense(input_size[0] / 4 * input_size[1] / 4 * input_size[2]),
-        keras.layers.Reshape(target_shape=(input_size[0] / 4, input_size[1] / 4, input_size[2])),
-        keras.layers.Conv2D(16, (3,3), padding='same', activation='ReLU'),
+        keras.layers.Dense(input_size[0] // 4 * input_size[1] // 4 * input_size[2]),
+        keras.layers.Reshape(target_shape=(input_size[0] // 4, input_size[1] // 4, input_size[2])),
+        keras.layers.Conv2D(8, (3,3), padding='same', activation='ReLU'),
         keras.layers.UpSampling2D((4, 4)),
-        keras.layers.Conv2D(1, (3,3), padding='same', activation='ReLU')
+        keras.layers.Conv2D(1, (3,3), padding='same')
     ])
     
     Input = keras.Input(shape=input_size)
@@ -262,7 +264,6 @@ def test_CNE2(train_images, train_labels, oneshot_images, oneshot_labels, classi
     if verbose: print("======= CNN-CNN ae method: Training and evaluating ... =======")
     if verbose: print("Learning background ...")
     autoencoder, encoder = convolutional_autoencoder((w, h, c), n_components)
-    # print(autoencoder.summary())
     autoencoder.fit(train_images, train_images, epochs=10)
 
     if verbose: print("Vectorizing ...")
