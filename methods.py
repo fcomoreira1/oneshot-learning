@@ -1,42 +1,41 @@
 import emnist
 import numpy as np
 import matplotlib.pyplot as plt
-import tensorflow as tf
 import tensorflow.keras as keras
-import sklearn
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 
-''' Data handling general functions '''
+''' Data-handling functions '''
 
 def separate_fewshot(test_images, test_labels, n_shots):
-    fewshot_data = []
-    val_data = []
+    fewshot_pick = []
+    validation_pick = []
     for label in np.unique(test_labels):
-        for num in np.random.choice(np.where(test_labels == label)[0], n_shots, False):
-            fewshot_data.append(num)
-    temp = set(fewshot_data)
+        for i in np.random.choice(np.where(test_labels == label)[0], n_shots, False):
+            fewshot_pick.append(i)
+    temp = set(fewshot_pick)
     for i in range(len(test_labels)):
         if not i in temp:
-            val_data.append(i)
-    fewshot_images = test_images[fewshot_data]
-    fewshot_labels = test_labels[fewshot_data]
-    val_images = test_images[val_data]
-    val_labels = test_labels[val_data]
-    return fewshot_images, fewshot_labels, val_images, val_labels
+            validation_pick.append(i)
+    fewshot_images = test_images[fewshot_pick]
+    fewshot_labels = test_labels[fewshot_pick]
+    validation_images = test_images[validation_pick]
+    validation_labels = test_labels[validation_pick]
+    return fewshot_images, fewshot_labels, validation_images, validation_labels
 
 ''' Extended MNIST related functions '''
 
-def show_emnist():
-    # works on notebooks with matplotlib inline, at least
-    images, labels = emnist.extract_training_samples('balanced')
-    f, axes = plt.subplots(47, 5, figsize=(8, 30))
-    for i in range(47):
-        index = np.where(labels == i)[0][:5]
-        for j in range(5):
-            axes[i][j].imshow(images[index[j]])
-            axes[i][j].axis('off')
+# def show_data(train_images, train_labels, oneshot_images, oneshot_labels, validation_images, validation_labels):
+#     # works on notebooks with matplotlib inline, at least
+#     train_classes = np.unique(np.unique(train_labels))
+#     _, axes = plt.subplots(len(train_classes), 5, figsize=(8, 30))
+#     for i in range(len(train_classes)):
+#         pick = np.where(train_labels == train_classes[i])[0][:5]
+#         for j in range(5):
+#             axes[i][j].imshow(train_images[pick[j]])
+#             axes[i][j].axis('off')
+#     plt.title('train data')
 
 def get_emnist(n_background_classes, n_shots, verbose, reshape = True, n_test_classes=None):
     images, labels = emnist.extract_training_samples('balanced')
@@ -66,13 +65,37 @@ def get_emnist(n_background_classes, n_shots, verbose, reshape = True, n_test_cl
 
     return train_images, train_labels, fewshot_images, fewshot_labels, val_images, val_labels
 
+def get_emnist_2(train_classes, test_classes, n_shots, reshape=False, verbose=True):
+    images, labels = emnist.extract_training_samples('balanced')
+    images = images.copy().astype('float') / 255
+    if reshape: images = images.reshape(-1, 28 * 28)
+
+    # divide into train and test
+    if verbose: print("======= Loading emnist data ... =======")
+    train_pick = np.where(np.isin(labels, train_classes))[0]
+    test_pick = np.where(np.isin(labels, test_classes))[0]
+    train_images = images[train_pick, :, :]
+    train_labels = labels[train_pick]
+    test_images = images[test_pick, :, :]
+    test_labels = labels[test_pick]
+    if verbose:
+        print("Output shapes: ", [i.shape for i in [train_images, train_labels, test_images, test_labels]])
+        print("Train labels: ", np.unique(train_labels))
+        print("Test labels: ", np.unique(test_labels))
+
+    # further divide test into fewshot and val
+    fewshot_images, fewshot_labels, validation_images, validation_labels = separate_fewshot(test_images, test_labels, n_shots)
+    if verbose: print("======= Finished loading. =======")
+
+    return train_images, train_labels, fewshot_images, fewshot_labels, validation_images, validation_labels
+
 def train_fewshot(encoder, n_shots, fewshot_images, fewshot_labels):
     return KNeighborsClassifier(n_neighbors=min(n_shots, 5)).fit(encoder(fewshot_images), fewshot_labels)
 
 def train_fewshot_2(encoder, n_shots, fewshot_images, fewshot_labels):
     return KNeighborsClassifier(n_neighbors=min(n_shots, 5)).fit(encoder.transform(fewshot_images), fewshot_labels)
 
-''' Functions with linear methods '''
+''' Linear methods '''
 
 def test_PCA(train_images, train_labels, oneshot_images, oneshot_labels, classify_images, classify_labels, 
              n, n_components = 32, verbose=False, train=1):
