@@ -38,18 +38,19 @@ def show_emnist():
             axes[i][j].imshow(images[index[j]])
             axes[i][j].axis('off')
 
-def get_emnist(n_background_classes, n_shots, verbose, reshape = True):
+def get_emnist(n_background_classes, n_shots, verbose, reshape = True, n_test_classes=None):
     images, labels = emnist.extract_training_samples('balanced')
     images = images.copy().astype('float') / 255
     if reshape: images = images.reshape(-1, 28 * 28)
     assert (1 <= n_background_classes <= 45), 'Invalid choice of n_background_classes'
+    n_test_classes = n_background_classes if n_test_classes == None else 47-n_test_classes
 
     # divide into train and test
     if verbose: print("======= Loading emnist data ... =======")
     classes = np.unique(labels)
     np.random.shuffle(classes)
     train_pick = np.where(np.isin(labels, classes[:n_background_classes]))[0]
-    test_pick = np.where(np.isin(labels, classes[n_background_classes:]))[0]
+    test_pick = np.where(np.isin(labels, classes[n_test_classes:]))[0]
     train_images = images[train_pick, :, :]
     train_labels = labels[train_pick]
     test_images = images[test_pick, :, :]
