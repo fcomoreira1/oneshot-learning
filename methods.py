@@ -5,6 +5,9 @@ import tensorflow.keras as keras
 from sklearn.decomposition import PCA
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+from tensorflow.keras.layers import Input, Lambda, Conv2D, MaxPooling2D, BatchNormalization, Dense, Flatten, Activation, Dropout
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras import backend as K
 
 ''' Data-handling functions '''
 
@@ -42,7 +45,8 @@ def get_emnist(seed, n_train_classes, n_test_classes, ns_shots, verbose=True, re
     if verbose: print("======= Loading emnist data... =======")
     images, labels = emnist.extract_training_samples('balanced')
     images = images.copy().astype('float') / 255
-    if reshape: images = images.reshape(-1, 28 * 28)
+    _, w, h = images.shape
+    if reshape: images = images.reshape(-1, w * h)
     n_test_classes = 47 - n_test_classes
 
     # divide into train and test
@@ -167,18 +171,30 @@ def nonlinear_autoencoder(input_size, code_size: int):
     autoencoder.compile(optimizer='Adam', loss='MSE')
     return autoencoder, encoder
 
+def cnn_encoder(w, h, encoding_size):
+    return Sequential([
+        Conv2D(16, (3, 3), input_shape=(w, h, 1), activation='relu', kernel_regularizer='l2'),
+        BatchNormalization(),
+        Activation('relu'),
+        MaxPooling2D(pool_size=2, strides=(2, 2)),
+        Dropout(0.25),
+
+        Conv2D(32, (3, 3), kernel_regularizer='l2'),
+        BatchNormalization(),
+        Activation('relu'),
+        MaxPooling2D(pool_size=2, strides=(2, 2)),
+        Dropout(0.25),
+
+        Flatten(),
+        
+        Dense(encoding_size),
+    ])
+
 def nonlinear_autoencoder_with_cnn_encoder(input_shape, code_size):
     """
     Instantiates and compiles an autoencoder with CNN encoder, returns both the autoencoder and the CNN encoder
     """
-    encoder = keras.Sequential([
-        keras.layers.Conv2D(16, (3, 3), activation='ReLU'),
-        keras.layers.MaxPool2D((2, 2)),
-        keras.layers.Conv2D(8, (3, 3), activation='ReLU'),
-        keras.layers.MaxPool2D((2, 2)),
-        keras.layers.Flatten(),
-        keras.layers.Dense(code_size),
-    ])
+    encoder = cnn_encoder(input_shape[0], input_shape[1], code_size)
     
     output_size = input_shape[0] * input_shape[1] * input_shape[2]
     decoder = keras.Sequential([
@@ -198,8 +214,8 @@ def test_NLAE(seed, n_train_classes, n_test_classes, ns_shots, encoding_size=32,
     
     if verbose: print("======= Nonlinear autoencoder method: Training and evaluating... =======")
     if verbose: print("Learning background...")
-    autoencoder, encoder = nonlinear_autoencoder(28 * 28, encoding_size)
-    autoencoder.fit(train_images, train_images, epochs=10)
+    autoencoder, encoder = nonlinear_autoencoder(train_images.shape[1], encoding_size)
+    autoencoder.fit(train_images, train_images, epochs=15)
 
     accuracies = [None] * len(ns_shots)
     for i, n_shots in enumerate(ns_shots):
@@ -217,14 +233,13 @@ def test_NLAE(seed, n_train_classes, n_test_classes, ns_shots, encoding_size=32,
     return accuracies
 
 def test_NLAE_CNNE(seed, n_train_classes, n_test_classes, ns_shots, encoding_size=32, verbose=True):
-    # train_images, train_labels, oneshot_images, oneshot_labels, classify_images, classify_labels, 
-    #          n, n_components = 32, verbose=False, train=1, w=28, h=28, c=1, o=28*28):
     train_images, train_labels, test_data = get_emnist(seed, n_train_classes, n_test_classes, ns_shots, False)
 
     if verbose: print("======= Nonlinear autoencoder with CNN encoder method: Training and evaluating... =======")
     if verbose: print("Learning background...")
-    autoencoder, encoder = nonlinear_autoencoder_with_cnn_encoder((28, 28, 1), encoding_size)
-    autoencoder.fit(train_images, train_images.reshape(-1, 28 * 28), epochs=10)
+    _, w, h = train_images.shape
+    autoencoder, encoder = nonlinear_autoencoder_with_cnn_encoder((w, h, 1), encoding_size)
+    autoencoder.fit(train_images, train_images.reshape(-1, w * h), epochs=10)
 
     accuracies = [None] * len(ns_shots)
     for i, n_shots in enumerate(ns_shots):
@@ -299,3 +314,70 @@ def test_NLAE_CNNE(seed, n_train_classes, n_test_classes, ns_shots, encoding_siz
 #         print("======= CNN-CNN ae method: Finished =======")
 
 #     return np.sum(pred == classify_labels)/len(classify_labels)
+
+def get_image_by_label(train_images, train_labels, label):
+    return train_images[np.random.choice(np.where(train_labels == label)[0], 1, replace=False)[0]]
+
+def get_train_data(train_images, train_labels, batch_size):
+    _, w, h = train_images.shape
+    targets = np.zeros((batch_size,))
+    targets[batch_size // 2:] = 1
+    pairs = [np.zeros((batch_size, w, h)) for _ in range(2)]
+    labels = np.unique(train_labels)
+    for i in range(batch_size):
+        class1, class2 = np.random.choice(labels, 2, replace=False)
+        assert(class1 != class2)
+        pairs[0][i] = get_image_by_label(train_images, train_labels, class1)
+        pairs[1][i] = get_image_by_label(train_images, train_labels, class2 if i < batch_size // 2 else class1)
+    return pairs, targets
+
+def siamese_net_with_cnn_encoder(w, h, encoding_size):
+    left_input = Input((w, h, 1))
+    right_input = Input((w, h, 1))
+    
+    encoder = cnn_encoder(w, h, encoding_size)
+    
+    left_emb = encoder(left_input)
+    right_emb = encoder(right_input)
+    
+    L1_Layer = Lambda(lambda tensors: K.abs(tensors[0] - tensors[1]))
+    L1_Dist = L1_Layer([left_emb,right_emb])
+    OP = Dense(1, activation='sigmoid', kernel_regularizer='l2')(L1_Dist)
+    
+    siamese_net = Model(inputs=[left_input, right_input], outputs=OP)
+    
+    return siamese_net, encoder
+
+def test_SN(seed, n_train_classes, n_test_classes, ns_shots, n_iterations=3000, batch_size=10, encoding_size=32, verbose=True):
+    train_images, train_labels, test_data = get_emnist(seed, n_train_classes, n_test_classes, ns_shots, False)
+
+    _, w, h = train_images.shape
+
+    if verbose: print("======= Siamese network method: Training and evaluating... =======")
+    if verbose: print("Learning background...")
+
+    siamese_net, encoder = siamese_net_with_cnn_encoder(w, h, encoding_size)
+    siamese_net.compile(
+        loss='binary_crossentropy',
+        optimizer='Adam',
+        metrics=['accuracy']
+    )
+
+    for i in range(n_iterations):
+        x, y = get_train_data(train_images, train_labels, batch_size)
+        siamese_net.fit(x, y, verbose=False)
+
+    accuracies = [None] * len(ns_shots)
+    for i, n_shots in enumerate(ns_shots):
+        if verbose: print(f'Learning {n_shots}-shot and predicting...')
+        fewshot_images, fewshot_labels, val_images, val_labels = test_data[i]
+        classifier = train_fewshot(encoder, n_shots, fewshot_images, fewshot_labels)
+        pred = classifier.predict(encoder(val_images))
+        accuracies[i] = np.sum(pred == val_labels) / val_labels.shape[0]
+        if verbose:
+            print(f'Accuracy for {n_shots}-shot: {accuracies[i]}')
+    
+    if verbose:
+        print("======= Nonlinear autoencoder method: Finished =======")
+
+    return accuracies
