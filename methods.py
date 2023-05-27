@@ -8,21 +8,21 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 
 ''' Data-handling functions '''
 
-def separate_fewshot(rng, test_images, test_labels, n_shots):
+def separate_fewshot(test_images, test_labels, n_shots):
     fewshot_pick = []
-    validation_pick = []
+    val_pick = []
     for label in np.unique(test_labels):
-        for i in rng.choice(np.where(test_labels == label)[0], n_shots, False):
+        for i in np.random.choice(np.where(test_labels == label)[0], n_shots, False):
             fewshot_pick.append(i)
     temp = set(fewshot_pick)
     for i in range(len(test_labels)):
         if not i in temp:
-            validation_pick.append(i)
+            val_pick.append(i)
     fewshot_images = test_images[fewshot_pick]
     fewshot_labels = test_labels[fewshot_pick]
-    validation_images = test_images[validation_pick]
-    validation_labels = test_labels[validation_pick]
-    return fewshot_images, fewshot_labels, validation_images, validation_labels
+    val_images = test_images[val_pick]
+    val_labels = test_labels[val_pick]
+    return fewshot_images, fewshot_labels, val_images, val_labels
 
 ''' Extended MNIST related functions '''
 
@@ -37,33 +37,34 @@ def separate_fewshot(rng, test_images, test_labels, n_shots):
 #             axes[i][j].axis('off')
 #     plt.title('train data')
 
-def get_emnist(rng, n_train_classes, n_test_classes, n_shots, verbose=True, reshape=False):
+def get_emnist(seed, n_train_classes, n_test_classes, ns_shots, verbose=True, reshape=False):
     assert (1 <= n_train_classes <= 45 and n_train_classes + n_test_classes <= 47), 'Invalid choice of n_train_classes and n_test_classes'
+    if verbose: print("======= Loading emnist data... =======")
     images, labels = emnist.extract_training_samples('balanced')
     images = images.copy().astype('float') / 255
     if reshape: images = images.reshape(-1, 28 * 28)
     n_test_classes = 47 - n_test_classes
 
     # divide into train and test
-    if verbose: print("======= Loading emnist data ... =======")
     classes = np.unique(labels)
-    rng.shuffle(classes)
+    np.random.seed(seed)
+    np.random.shuffle(classes)
     train_pick = np.where(np.isin(labels, classes[:n_train_classes]))[0]
     test_pick = np.where(np.isin(labels, classes[n_test_classes:]))[0]
-    train_images = images[train_pick, :, :]
+    train_images = images[train_pick]
     train_labels = labels[train_pick]
-    test_images = images[test_pick, :, :]
+    test_images = images[test_pick]
     test_labels = labels[test_pick]
-    if verbose:
-        print("Output shapes: ", [i.shape for i in [train_images, train_labels, test_images, test_labels]])
-        print("Train labels: ", np.unique(train_labels))
-        print("Test labels: ", np.unique(test_labels))
 
     # further divide test into fewshot and val
-    fewshot_images, fewshot_labels, val_images, val_labels = separate_fewshot(rng, test_images, test_labels, n_shots)
+    test_data = [None] * len(ns_shots)
+    for i, n_shots in enumerate(ns_shots):
+        np.random.seed(seed)
+        np.random.shuffle(classes)
+        test_data[i] = separate_fewshot(test_images, test_labels, n_shots)
     if verbose: print("======= Finished loading. =======")
 
-    return train_images, train_labels, fewshot_images, fewshot_labels, val_images, val_labels
+    return train_images, train_labels, test_data
 
 # def get_emnist_2(train_classes, test_classes, n_shots, reshape=False, verbose=True):
 #     images, labels = emnist.extract_training_samples('balanced')
@@ -97,45 +98,51 @@ def train_fewshot_2(encoder, n_shots, fewshot_images, fewshot_labels):
 
 ''' Linear methods '''
 
-def test_PCA(train_images, train_labels, oneshot_images, oneshot_labels, classify_images, classify_labels, 
-             n, n_components = 32, verbose=False, train=1):
-    
-    if verbose: print("======= PCA method: Training and evaluating ... =======")
-    if verbose: print("Learning background ...")
-    pca = PCA(n_components=n_components)
+def test_PCA(seed, n_train_classes, n_test_classes, ns_shots, encoding_size=32, verbose=True):
+    train_images, train_labels, test_data = get_emnist(seed, n_train_classes, n_test_classes, ns_shots, False, True)
+
+    if verbose: print("======= PCA method: Training and evaluating... =======")
+    if verbose: print("Learning background...")
+    pca = PCA(n_components=encoding_size)
     pca.fit(X=train_images)
 
-    if verbose: print("Learning oneshot ...")
-    classifier = train_fewshot_2(pca, train, oneshot_images, oneshot_labels)
-
-    if verbose: print("Predicting ...")
-    pred = classifier.predict(pca.transform(classify_images))
+    accuracies = [None] * len(ns_shots)
+    for i, n_shots in enumerate(ns_shots):
+        if verbose: print(f'Learning {n_shots}-shot and predicting...')
+        fewshot_images, fewshot_labels, val_images, val_labels = test_data[i]
+        classifier = train_fewshot_2(pca, n_shots, fewshot_images, fewshot_labels)
+        pred = classifier.predict(pca.transform(val_images))
+        accuracies[i] = np.sum(pred == val_labels) / val_labels.shape[0]
+        if verbose:
+            print(f'Accuracy for {n_shots}-shot: {accuracies[i]}')
 
     if verbose:
-        print("Accuracy: ", np.sum(pred == classify_labels)/len(classify_labels))
         print("======= PCA method: Finished =======")
 
-    return np.sum(pred == classify_labels)/len(classify_labels)
+    return accuracies
 
-def test_LDA(train_images, train_labels, oneshot_images, oneshot_labels, classify_images, classify_labels, 
-             n, n_components = 32, verbose=False, train=1):
+def test_LDA(seed, n_train_classes, n_test_classes, ns_shots, encoding_size=32, verbose=True):
+    train_images, train_labels, test_data = get_emnist(seed, n_train_classes, n_test_classes, ns_shots, False, True)
     
-    if verbose: print("======= LDA method: Training and evaluating ... =======")
-    if verbose: print("Learning background ...")
-    lda = LDA(n_components=n_components)
+    if verbose: print("======= LDA method: Training and evaluating... =======")
+    if verbose: print("Learning background...")
+    lda = LDA(n_components=encoding_size)
     lda.fit(X=train_images, y=train_labels)
 
-    if verbose: print("Learning oneshot ...")
-    classifier = train_fewshot_2(lda, train, oneshot_images, oneshot_labels)
-
-    if verbose: print("Predicting ...")
-    pred = classifier.predict(lda.transform(classify_images))
-
+    accuracies = [None] * len(ns_shots)
+    for i, n_shots in enumerate(ns_shots):
+        if verbose: print(f'Learning {n_shots}-shot and predicting...')
+        fewshot_images, fewshot_labels, val_images, val_labels = test_data[i]
+        classifier = train_fewshot_2(lda, n_shots, fewshot_images, fewshot_labels)
+        pred = classifier.predict(lda.transform(val_images))
+        accuracies[i] = np.sum(pred == val_labels) / val_labels.shape[0]
+        if verbose:
+            print(f'Accuracy for {n_shots}-shot: {accuracies[i]}')
+    
     if verbose:
-        print("Accuracy: ", np.sum(pred == classify_labels)/len(classify_labels))
         print("======= LDA method: Finished =======")
 
-    return np.sum(pred == classify_labels)/len(classify_labels)
+    return accuracies
 
 ''' Functions for nonlinear methods '''
 
