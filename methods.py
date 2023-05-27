@@ -8,11 +8,11 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 
 ''' Data-handling functions '''
 
-def separate_fewshot(test_images, test_labels, n_shots):
+def separate_fewshot(rng, test_images, test_labels, n_shots):
     fewshot_pick = []
     validation_pick = []
     for label in np.unique(test_labels):
-        for i in np.random.choice(np.where(test_labels == label)[0], n_shots, False):
+        for i in rng.choice(np.where(test_labels == label)[0], n_shots, False):
             fewshot_pick.append(i)
     temp = set(fewshot_pick)
     for i in range(len(test_labels)):
@@ -37,20 +37,18 @@ def separate_fewshot(test_images, test_labels, n_shots):
 #             axes[i][j].axis('off')
 #     plt.title('train data')
 
-def get_emnist(n_background_classes, n_shots, verbose, reshape = True, n_test_classes=None, seed=None):
+def get_emnist(rng, n_train_classes, n_test_classes, n_shots, verbose=True, reshape=False):
+    assert (1 <= n_train_classes <= 45 and n_train_classes + n_test_classes <= 47), 'Invalid choice of n_train_classes and n_test_classes'
     images, labels = emnist.extract_training_samples('balanced')
     images = images.copy().astype('float') / 255
     if reshape: images = images.reshape(-1, 28 * 28)
-    assert (1 <= n_background_classes <= 45), 'Invalid choice of n_background_classes'
-    n_test_classes = n_background_classes if n_test_classes == None else 47-n_test_classes
-
-    if seed: np.random.seed(seed)
+    n_test_classes = 47 - n_test_classes
 
     # divide into train and test
     if verbose: print("======= Loading emnist data ... =======")
     classes = np.unique(labels)
-    np.random.shuffle(classes)
-    train_pick = np.where(np.isin(labels, classes[:n_background_classes]))[0]
+    rng.shuffle(classes)
+    train_pick = np.where(np.isin(labels, classes[:n_train_classes]))[0]
     test_pick = np.where(np.isin(labels, classes[n_test_classes:]))[0]
     train_images = images[train_pick, :, :]
     train_labels = labels[train_pick]
@@ -62,34 +60,34 @@ def get_emnist(n_background_classes, n_shots, verbose, reshape = True, n_test_cl
         print("Test labels: ", np.unique(test_labels))
 
     # further divide test into fewshot and val
-    fewshot_images, fewshot_labels, val_images, val_labels = separate_fewshot(test_images, test_labels, n_shots)
+    fewshot_images, fewshot_labels, val_images, val_labels = separate_fewshot(rng, test_images, test_labels, n_shots)
     if verbose: print("======= Finished loading. =======")
 
     return train_images, train_labels, fewshot_images, fewshot_labels, val_images, val_labels
 
-def get_emnist_2(train_classes, test_classes, n_shots, reshape=False, verbose=True):
-    images, labels = emnist.extract_training_samples('balanced')
-    images = images.copy().astype('float') / 255
-    if reshape: images = images.reshape(-1, 28 * 28)
+# def get_emnist_2(train_classes, test_classes, n_shots, reshape=False, verbose=True):
+#     images, labels = emnist.extract_training_samples('balanced')
+#     images = images.copy().astype('float') / 255
+#     if reshape: images = images.reshape(-1, 28 * 28)
 
-    # divide into train and test
-    if verbose: print("======= Loading emnist data ... =======")
-    train_pick = np.where(np.isin(labels, train_classes))[0]
-    test_pick = np.where(np.isin(labels, test_classes))[0]
-    train_images = images[train_pick, :, :]
-    train_labels = labels[train_pick]
-    test_images = images[test_pick, :, :]
-    test_labels = labels[test_pick]
-    if verbose:
-        print("Output shapes: ", [i.shape for i in [train_images, train_labels, test_images, test_labels]])
-        print("Train labels: ", np.unique(train_labels))
-        print("Test labels: ", np.unique(test_labels))
+#     # divide into train and test
+#     if verbose: print("======= Loading emnist data ... =======")
+#     train_pick = np.where(np.isin(labels, train_classes))[0]
+#     test_pick = np.where(np.isin(labels, test_classes))[0]
+#     train_images = images[train_pick, :, :]
+#     train_labels = labels[train_pick]
+#     test_images = images[test_pick, :, :]
+#     test_labels = labels[test_pick]
+#     if verbose:
+#         print("Output shapes: ", [i.shape for i in [train_images, train_labels, test_images, test_labels]])
+#         print("Train labels: ", np.unique(train_labels))
+#         print("Test labels: ", np.unique(test_labels))
 
-    # further divide test into fewshot and val
-    fewshot_images, fewshot_labels, validation_images, validation_labels = separate_fewshot(test_images, test_labels, n_shots)
-    if verbose: print("======= Finished loading. =======")
+#     # further divide test into fewshot and val
+#     fewshot_images, fewshot_labels, validation_images, validation_labels = separate_fewshot(test_images, test_labels, n_shots)
+#     if verbose: print("======= Finished loading. =======")
 
-    return train_images, train_labels, fewshot_images, fewshot_labels, validation_images, validation_labels
+#     return train_images, train_labels, fewshot_images, fewshot_labels, validation_images, validation_labels
 
 def train_fewshot(encoder, n_shots, fewshot_images, fewshot_labels):
     return KNeighborsClassifier(n_neighbors=min(n_shots, 5)).fit(encoder(fewshot_images), fewshot_labels)
