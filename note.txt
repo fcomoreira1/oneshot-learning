@@ -1,0 +1,22 @@
+NLE vs PCA: emnist 40 32 true 1
+- .436 vs .428
+- .463 vs .476
+- .590 vs .554
+- .451 vs .439
+- .529 vs .459
+
+EMNIST experiments:
+
+Seed 0. 40-7. 32 sized encoder
+
+            PCA        LDA
+1 shot      48.71      44.11
+3 shot      51.56      48.45
+5 shot      58.78      55.85
+
+Seed 1. 40-7. 32 sized encoder
+
+            PCA        LDA
+1 shot      39.78      52.40
+3 shot      55.40      62.98
+5 shot      61.06      63.22
